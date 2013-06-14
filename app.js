@@ -6,10 +6,12 @@
 var express = require('express')
   , app = express()  
   , server = require('http').createServer(app)
+  , https = require('https')
   , path = require('path')
   , io = require('socket.io').listen(server)
   , spawn = require('child_process').spawn
-  , omx = require('omxcontrol');
+  , omx = require('omxcontrol')
+  , config = require('config.js');
 
 
 
@@ -36,6 +38,11 @@ app.get('/remote', function (req, res) {
   res.sendfile(__dirname + '/public/remote.html');
 });
 
+app.get('/putio', function (req, res) {
+  res.sendfile(__dirname + '/public/putio.html');
+});
+
+
 app.get('/play/:video_id', function (req, res) {
 
 });
@@ -55,7 +62,7 @@ function run_shell(cmd, args, cb, end) {
     var spawn = require('child_process').spawn,
         child = spawn(cmd, args),
         me = this;
-    child.stdout.on('data', function (buffer) { cb(me, buffer); });
+    child.stdout.on('readable', function () { cb(me, child.stdout); });
     child.stdout.on('end', end);
 }
 
@@ -93,22 +100,44 @@ io.sockets.on('connection', function (socket) {
      }
    }
  });
-
+socket.on("log", function(data){
+    console.log(data);
+});
  socket.on("video", function(data){
 
     if( data.action === "play"){
-    var id = data.video_id,
-         url = "http://www.youtube.com/watch?v="+id;
-
-    var runShell = new run_shell('youtube-dl',['-o','%(id)s.%(ext)s','-f','/18/22',url],
-        function (me, buffer) {
-            me.stdout += buffer.toString();
-            socket.emit("loading",{output: me.stdout});
-            console.log(me.stdout);
-         },
-        function () {
-            //child = spawn('omxplayer',[id+'.mp4']);
-            omx.start(id+'.mp4');
+        console.log(data.video_id);
+        var id = data.video_id,
+             url = "http://www.youtube.com/watch?v="+id;
+        var runShell = new run_shell('youtube-dl',['-gf', '18/22/34/35/37', url],
+            function (me, stdout) { 
+                //console.log(escape(stdout.read().toString().replace(/[\r\n]/g, "")));
+                me.stdout = stdout.read().toString().replace(/[\r\n]/g, "");
+                socket.emit("loading",{output: me.stdout});
+                omx.start(me.stdout);
+            }, 
+            function (me) {
+                console.log("Finished");
+            });
+    }
+    if( data.action == "stream") {
+        var id = data.video_id, 
+            url = "https://api.put.io/v2/files/"+id+"/mp4/stream/?oauth_token="+config.PUTIO_KEY;
+        var options = {
+          host: 'api.put.io',
+          port: 443,
+          path: '/v2/files/'+id+'/stream?oauth_token='+config.PUTIO_KEY,
+          method: 'GET'
+        };
+        
+        var req = https.request(options, function(res) {
+          console.log('STATUS: ' + res.statusCode);
+          console.log('HEADERS: ' + JSON.stringify(res.headers));
+          omx.start(res.headers.location);
+        });
+        req.end();
+        req.on('error', function(e) {
+          console.log('problem with request: ' + e.message);
         });
     }
 
